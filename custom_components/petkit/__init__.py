@@ -152,8 +152,8 @@ class PetkitAccount:
                 'X-Client': 'Android(7.1.1;Xiaomi)',
                 'X-Session': f'{self.token}',
             },
-        }
-        kws.update(kwargs)
+        } | kwargs
+
         if method in ['GET']:
             kws['params'] = pms
         elif method in ['POST_GET']:
@@ -179,7 +179,7 @@ class PetkitAccount:
             'password': self.password,
             'oldVersion': '',
         }
-        rsp = await self.request(f'user/login', pms, 'POST_GET')
+        rsp = await self.request('user/login', pms, 'POST_GET')
         ssn = rsp.get('result', {}).get('session') or {}
         sid = ssn.get('id')
         if not sid:
@@ -205,7 +205,7 @@ class PetkitAccount:
             if cfg.get(CONF_TOKEN) == old.get(CONF_TOKEN):
                 cfg['update_at'] = old.get('update_at')
             else:
-                cfg['update_at'] = f'{datetime.datetime.today()}'
+                cfg['update_at'] = f'{datetime.datetime.now()}'
             await sto.async_save(cfg)
             return cfg
         if old.get(CONF_TOKEN):
@@ -221,9 +221,8 @@ class PetkitAccount:
         api = 'discovery/device_roster'
         rsp = await self.request(api)
         eno = rsp.get('error', {}).get('code', 0)
-        if eno in [5, 8]:
-            if await self.async_login():
-                rsp = await self.request(api)
+        if eno in [5, 8] and await self.async_login():
+            rsp = await self.request(api)
         dls = rsp.get('result', {}).get(CONF_DEVICES) or []
         if not dls:
             _LOGGER.warning('Got petkit devices for %s failed: %s', self.username, rsp)
@@ -249,8 +248,7 @@ class DevicesCoordinator(DataUpdateCoordinator):
             if not did:
                 continue
             typ = dat['type'] = dvc.get('type') or ''
-            old = self.hass.data[DOMAIN][CONF_DEVICES].get(did)
-            if old:
+            if old := self.hass.data[DOMAIN][CONF_DEVICES].get(did):
                 dvc = old
                 dvc.update_data(dat)
             else:
@@ -365,11 +363,10 @@ class PetkitDevice:
             },
         }
         if 'battery' in self.data:
-            dat.update({
-                'battery': {
-                    'class': 'battery',
-                },
-            })
+            dat['battery'] = {
+                'class': 'battery',
+            }
+
         return dat
 
     @property
@@ -419,7 +416,7 @@ class FeederDevice(PetkitDevice):
     def food_state_attrs(self):
         return {
             'state': self.status.get('food'),
-            'desc': 'normal' if not self.food_state else 'few',
+            'desc': 'few' if self.food_state else 'normal',
         }
 
     @property
@@ -458,8 +455,7 @@ class FeederDevice(PetkitDevice):
         num = self.account.get_config(CONF_FEEDING_AMOUNT)
         eid = f'{num}'
         if 'input_number.' in eid:
-            sta = self.account.hass.states.get(eid)
-            if sta:
+            if sta := self.account.hass.states.get(eid):
                 num = sta.state
         try:
             num = int(float(num))
@@ -495,7 +491,7 @@ class FeederDevice(PetkitDevice):
                 },
             }
         if self.device_type == 'd3':
-            dat.update({
+            dat |= {
                 'eat_amount': {
                     'unit': 'g',
                     'icon': 'mdi:weight-gram',
@@ -508,7 +504,8 @@ class FeederDevice(PetkitDevice):
                     'unit': 'g',
                     'icon': 'mdi:weight-gram',
                 },
-            })
+            }
+
         return dat
 
     @property
@@ -542,13 +539,13 @@ class FeederDevice(PetkitDevice):
             api = f'{typ}/saveDailyFeed'
         pms = {
             'deviceId': self.device_id,
-            'day': datetime.datetime.today().strftime('%Y%m%d'),
+            'day': datetime.datetime.now().strftime('%Y%m%d'),
             'time': -1,
             'amount': self.feeding_amount,
         }
+
         rdt = await self.account.request(api, pms)
-        eno = rdt.get('error', {}).get('code', 0)
-        if eno:
+        if eno := rdt.get('error', {}).get('code', 0):
             _LOGGER.error('Petkit feeding failed: %s', rdt)
             return False
         await self.update_device_detail()
@@ -766,7 +763,7 @@ class LitterDevice(PetkitDevice):
 
     @property
     def manual_lock(self):
-        return True if self.detail.get('settings', {}).get('manualLock') else False
+        return bool(self.detail.get('settings', {}).get('manualLock'))
 
     async def manual_lock_on(self, **kwargs):
         return await self.set_manual_lock(True)
@@ -787,8 +784,7 @@ class LitterDevice(PetkitDevice):
             **kwargs,
         }
         rdt = await self.account.request(api, pms)
-        eno = rdt.get('error', {}).get('code', 0)
-        if eno:
+        if eno := rdt.get('error', {}).get('code', 0):
             _LOGGER.error('Petkit device control failed: %s', [pms, rdt])
             return False
         await self.update_device_detail()
@@ -854,8 +850,9 @@ class FitDevice(PetkitDevice):
         api = f'{self.device_type}/deviceAllData'
         pms = {
             'deviceId': self.device_id,
-            'day': datetime.datetime.today().strftime('%Y%m%d'),
+            'day': datetime.datetime.now().strftime('%Y%m%d'),
         }
+
         rsp = None
         try:
             rsp = await self.account.request(api, pms)
